@@ -1,4 +1,9 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'tsup';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   entry: [
@@ -17,4 +22,9 @@ export default defineConfig({
   splitting: false,
   target: 'node20',
   tsconfig: './tsconfig.json',
+  esbuildOptions(options) {
+    options.alias = {
+      '@': path.resolve(__dirname, 'src'),
+    };
+  },
 });
