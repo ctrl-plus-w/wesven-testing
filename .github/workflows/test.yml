@@ -1,0 +1,78 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Pinned ref of the wesven-mvp-template fixture. Bump in the same PR that lands a
+# runner change requiring it.
+env:
+  TEMPLATE_REPO: wesven/wesven-mvp-template
+  TEMPLATE_REF: main
+
+jobs:
+  package-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec biome check
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm run build
+      - run: pnpm test:unit
+
+  template-fixture:
+    runs-on: ubuntu-latest
+    needs: package-unit
+    steps:
+      - name: Check out package
+        uses: actions/checkout@v4
+        with:
+          path: pkg
+      - name: Check out template fixture
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TEMPLATE_REPO }}
+          ref: ${{ env.TEMPLATE_REF }}
+          path: template
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: |
+            pkg/pnpm-lock.yaml
+            template/pnpm-lock.yaml
+      - name: Build package
+        working-directory: pkg
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Wire template to local package
+        working-directory: template
+        run: pnpm add file:../pkg
+      - name: Install template
+        working-directory: template
+        run: pnpm install
+      - name: Template unit tests
+        working-directory: template
+        run: pnpm test:unit
+      - name: Template integration tests
+        working-directory: template
+        run: pnpm test:integration
+      - name: Install Cypress
+        working-directory: template
+        run: pnpm test:e2e:install
+      - name: Template e2e tests
+        working-directory: template
+        run: pnpm test:e2e

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17
+    command: postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c random_page_cost=1.0
+    volumes:
+      - test_data:/var/lib/postgresql/data
+    ports:
+      - "${TEST_DB_PORT:-5439}:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=main
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  test_data:

@@ -1,0 +1,101 @@
+{
+  "name": "@wesven/testing",
+  "version": "0.1.0",
+  "description": "Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Postgres + Vitest + Cypress + MSW). Compiled with tsup; ships ESM .js + .d.ts.",
+  "license": "MIT",
+  "type": "module",
+  "private": false,
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "exports": {
+    "./integration-runner": {
+      "types": "./dist/integration-runner.d.ts",
+      "default": "./dist/integration-runner.js"
+    },
+    "./e2e-runner": {
+      "types": "./dist/e2e-runner.d.ts",
+      "default": "./dist/e2e-runner.js"
+    },
+    "./vitest-config": {
+      "types": "./dist/vitest-config.d.ts",
+      "default": "./dist/vitest-config.js"
+    },
+    "./vitest-setup": {
+      "types": "./dist/vitest-setup.d.ts",
+      "default": "./dist/vitest-setup.js"
+    },
+    "./cypress-config": {
+      "types": "./dist/cypress-config.d.ts",
+      "default": "./dist/cypress-config.js"
+    },
+    "./compose-file": {
+      "types": "./dist/compose-file.d.ts",
+      "default": "./dist/compose-file.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepack": "pnpm run build",
+    "lint": "npm-run-all _biome:check _check-types",
+    "_biome:check": "biome check --write --unsafe --diagnostic-level=warn",
+    "_check-types": "tsc --noEmit",
+    "test:unit": "vitest run --reporter=verbose"
+  },
+  "dependencies": {
+    "@commander-js/extra-typings": "^14.0.0",
+    "@types/wait-on": "^5.3.4",
+    "commander": "^14.0.2",
+    "execa": "^8.0.1",
+    "listr2": "^9.0.5",
+    "picocolors": "^1.1.1",
+    "wait-on": "^9.0.3"
+  },
+  "peerDependencies": {
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^16.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "@vitest/ui": "^3.0.0 || ^4.0.0",
+    "cypress": "^15.0.0",
+    "jsdom": "^24.0.0",
+    "msw": "^2.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "vite-tsconfig-paths": "^5.0.0",
+    "vitest": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@vitest/coverage-v8": {
+      "optional": true
+    },
+    "@vitest/ui": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.12",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "cypress": "^15.6.0",
+    "jsdom": "^24.1.3",
+    "msw": "^2.12.2",
+    "npm-run-all": "^4.1.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.5",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@8.15.1"
+}
