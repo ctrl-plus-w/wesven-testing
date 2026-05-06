@@ -24,6 +24,8 @@ jobs:
           ref: ${{ env.TEMPLATE_REF }}
           path: template
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: pkg/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 20
