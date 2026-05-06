@@ -40,7 +40,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "prepack": "pnpm run build",
+    "prepare": "pnpm run build",
     "lint": "npm-run-all _biome:check _check-types",
     "_biome:check": "biome check --write --unsafe --diagnostic-level=warn",
     "_check-types": "tsc --noEmit",
