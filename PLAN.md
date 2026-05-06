@@ -42,7 +42,7 @@ The wesven-mvp-template adopts the package on day one, becoming the first consum
 23. As a new-project author, I want to use Vitest's `mergeConfig` to override the base config, so that I can change the test include glob, plugins, or pool configuration when my project diverges from the default.
 24. As a new-project author, I want my project's path aliases (`@/...`) to resolve naturally inside the runner and setup files, so that I do not configure tsconfig-paths plugins for the test runner.
 25. As a new-project author, I want `pnpm install` to require no auth or registry configuration, so that fresh checkouts and CI agents work with no extra setup.
-26. As a new-project author, I want pre-set up / post-setup / pre-teardown hooks and an extra-env passthrough, so that one-off project lifecycle needs do not require forking the runner.
+26. As a new-project author, I want pre-setup / post-setup / pre-teardown hooks and an extra-env passthrough, so that one-off project lifecycle needs do not require forking the runner.
 27. As a new-project author, I want the package to ship a sensible default `compose.test.yaml`, so that a brand-new project does not need to write one.
 28. As an existing-project maintainer, I want my project to keep working unchanged after the package exists, so that the template's adoption does not force urgent migration work on me.
 29. As an existing-project maintainer, I want a thirty-minute migration path from embedded runners to the package, so that adopting it is a low-cost decision.

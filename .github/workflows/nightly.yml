@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  TEMPLATE_REPO: wesven/wesven-mvp-template
+  TEMPLATE_REPO: ctrl-plus-w/wesven-mvp-template
   TEMPLATE_REF: main
 
 jobs:

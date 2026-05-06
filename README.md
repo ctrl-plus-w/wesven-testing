@@ -8,7 +8,7 @@ Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Pos
 // package.json
 {
   "dependencies": {
-    "@wesven/testing": "github:wesven/wesven-testing#v0.1.0"
+    "@wesven/testing": "github:ctrl-plus-w/wesven-testing#v0.1.0"
   }
 }
 ```

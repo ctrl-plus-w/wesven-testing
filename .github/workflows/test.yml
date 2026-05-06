@@ -8,7 +8,7 @@ on:
 # Pinned ref of the wesven-mvp-template fixture. Bump in the same PR that lands a
 # runner change requiring it.
 env:
-  TEMPLATE_REPO: wesven/wesven-mvp-template
+  TEMPLATE_REPO: ctrl-plus-w/wesven-mvp-template
   TEMPLATE_REF: main
 
 jobs:
