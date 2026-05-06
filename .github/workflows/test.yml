@@ -51,17 +51,21 @@ jobs:
           cache-dependency-path: |
             pkg/pnpm-lock.yaml
             template/pnpm-lock.yaml
-      - name: Build package
+      - name: Build & pack package
         working-directory: pkg
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
-      - name: Wire template to local package
+          pnpm pack --pack-destination ../
+      - name: Wire template to packed tarball
         working-directory: template
-        run: pnpm add file:../pkg
+        run: |
+          PKG_VERSION="$(node -p "require('../pkg/package.json').version")"
+          rm -f pnpm-lock.yaml
+          pnpm pkg set "dependencies.@wesven/testing=file:../wesven-testing-${PKG_VERSION}.tgz"
       - name: Install template
         working-directory: template
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
       - name: Template unit tests
         working-directory: template
         run: pnpm test:unit
