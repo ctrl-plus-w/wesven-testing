@@ -205,18 +205,6 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
             { concurrent: true, rendererOptions: { collapseSubtasks: false } },
           ),
       },
-      {
-        title: 'Running the end-to-end tests',
-        task: async () => {
-          if (opts.postSetup) await opts.postSetup();
-          const result = await execa('pnpm', buildCypressArgs(options), {
-            env: { ...env, CYPRESS_BASE_URL: env.NEXT_PUBLIC_APP_URL },
-            reject: false,
-            stdio: 'inherit',
-          });
-          if (typeof result.exitCode === 'number' && result.exitCode !== 0) process.exitCode = result.exitCode;
-        },
-      },
     ]);
 
     const cleanupTasks = new Listr<E2eContext>([
@@ -227,6 +215,13 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
     try {
       await tasks.run();
+      if (opts.postSetup) await opts.postSetup();
+      const result = await execa('pnpm', buildCypressArgs(options), {
+        env: { ...env, CYPRESS_BASE_URL: env.NEXT_PUBLIC_APP_URL },
+        reject: false,
+        stdio: 'inherit',
+      });
+      if (typeof result.exitCode === 'number' && result.exitCode !== 0) process.exitCode = result.exitCode;
     } catch (err) {
       console.error(err);
       process.exitCode = 1;

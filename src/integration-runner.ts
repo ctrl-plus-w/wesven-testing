@@ -141,20 +141,15 @@ export const createIntegrationRunner = (opts: IntegrationRunnerOptions) => {
             { concurrent: false, rendererOptions: { collapseSubtasks: false } },
           ),
       },
-      {
-        title: 'Running integration tests',
-        task: async () => {
-          if (opts.postSetup) await opts.postSetup();
-          const result = await execa('pnpm', buildVitestArgs(options), { env, reject: false, stdio: 'inherit' });
-          if (typeof result.exitCode === 'number' && result.exitCode !== 0) process.exitCode = result.exitCode;
-        },
-      },
     ]);
 
     const cleanupTasks = new Listr<ListrCtx>([dockerDownTask(env, projectName, compose, true)]);
 
     try {
       await setupTasks.run();
+      if (opts.postSetup) await opts.postSetup();
+      const result = await execa('pnpm', buildVitestArgs(options), { env, reject: false, stdio: 'inherit' });
+      if (typeof result.exitCode === 'number' && result.exitCode !== 0) process.exitCode = result.exitCode;
     } catch (err) {
       console.error(err);
       process.exitCode = 1;
