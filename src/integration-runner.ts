@@ -130,8 +130,6 @@ export const createIntegrationRunner = (opts: IntegrationRunnerOptions) => {
 
     printReadyBlock({ mode: 'default', dbPort, dbFromEnv, env, projectName });
 
-    let testOutput = '';
-
     if (opts.preSetup) await opts.preSetup();
 
     const setupTasks = new Listr<ListrCtx>([
@@ -147,8 +145,7 @@ export const createIntegrationRunner = (opts: IntegrationRunnerOptions) => {
         title: 'Running integration tests',
         task: async () => {
           if (opts.postSetup) await opts.postSetup();
-          const result = await execa('pnpm', buildVitestArgs(options), { env, reject: false });
-          testOutput = result.stdout + (result.stderr ? `\n${result.stderr}` : '');
+          const result = await execa('pnpm', buildVitestArgs(options), { env, reject: false, stdio: 'inherit' });
           if (typeof result.exitCode === 'number' && result.exitCode !== 0) process.exitCode = result.exitCode;
         },
       },
@@ -170,11 +167,6 @@ export const createIntegrationRunner = (opts: IntegrationRunnerOptions) => {
         }
       }
       await cleanupTasks.run();
-
-      if (testOutput) {
-        // biome-ignore lint/suspicious/noConsole: CLI script needs to output test report
-        console.log(testOutput);
-      }
 
       process.exit();
     }

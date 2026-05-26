@@ -172,8 +172,6 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
     printReadyBlock({ mode: 'default', dbPort, dbFromEnv, appPort, appFromEnv, env, projectName });
 
-    let testOutput = '';
-
     if (opts.preSetup) await opts.preSetup();
 
     const tasks = new Listr<E2eContext>([
@@ -214,8 +212,8 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
           const result = await execa('pnpm', buildCypressArgs(options), {
             env: { ...env, CYPRESS_BASE_URL: env.NEXT_PUBLIC_APP_URL },
             reject: false,
+            stdio: 'inherit',
           });
-          testOutput = result.stdout + (result.stderr ? `\n${result.stderr}` : '');
           if (typeof result.exitCode === 'number' && result.exitCode !== 0) process.exitCode = result.exitCode;
         },
       },
@@ -241,11 +239,6 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
         }
       }
       await cleanupTasks.run(tasks.ctx);
-
-      if (testOutput) {
-        // biome-ignore lint/suspicious/noConsole: CLI script needs to output test report
-        console.log(testOutput);
-      }
 
       process.exit();
     }
