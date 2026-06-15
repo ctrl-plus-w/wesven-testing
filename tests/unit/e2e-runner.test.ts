@@ -2,6 +2,8 @@ import { Listr } from 'listr2';
 import type { SetupServer } from 'msw/node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const dockerDownCalls = vi.hoisted(() => [] as { removeVolumes: boolean }[]);
+
 vi.mock('execa', () => ({
   execa: vi.fn(),
 }));
@@ -27,7 +29,10 @@ vi.mock('@/internal/listr-tasks', () => {
   const noopTask = (title: string) => ({ title, task: async () => {} });
   return {
     dockerUpTask: () => noopTask('docker up'),
-    dockerDownTask: () => noopTask('docker down'),
+    dockerDownTask: (_env: unknown, _projectName: string, _compose: unknown, removeVolumes: boolean) => {
+      dockerDownCalls.push({ removeVolumes });
+      return noopTask('docker down');
+    },
     migrateTask: () => noopTask('migrate'),
     resetTask: () => noopTask('reset'),
     injectTaskStdout: (cb: () => unknown) => async () => {
@@ -47,6 +52,8 @@ vi.mock('@/compose-file', () => ({
 }));
 
 import { execa } from 'execa';
+
+import { readRunnerState } from '@/internal/runner-state';
 
 import { createE2eRunner } from '@/e2e-runner';
 
@@ -78,6 +85,7 @@ beforeEach(() => {
   tickCounter = 0;
   listrRuns = [];
   execaCalls = [];
+  dockerDownCalls.length = 0;
 
   const originalRun = Listr.prototype.run;
   vi.spyOn(Listr.prototype, 'run').mockImplementation(async function (
@@ -123,6 +131,18 @@ const runDefault = async () => {
   }
 };
 
+const runDown = async () => {
+  const runner = createE2eRunner({
+    resetTables: async () => {},
+    mswServer: fakeMswServer(),
+  });
+  try {
+    await runner.parseAsync(['down'], { from: 'user' });
+  } catch (err) {
+    if (!(err instanceof Error) || err.message !== '__test_process_exit__') throw err;
+  }
+};
+
 describe('e2e-runner runDefault', () => {
   it('invokes cypress after the setup Listr has resolved', async () => {
     await runDefault();
@@ -137,5 +157,29 @@ describe('e2e-runner runDefault', () => {
     expect(cypressCall?.tick, 'cypress execa should be invoked after setup Listr resolves').toBeGreaterThan(
       setupListrRun?.end ?? 0,
     );
+  });
+
+  it('removes the docker volume during teardown so testbed volumes do not accumulate', async () => {
+    await runDefault();
+
+    expect(dockerDownCalls.length, 'teardown should run a docker-down task').toBeGreaterThan(0);
+    expect(
+      dockerDownCalls.every((c) => c.removeVolumes),
+      'every teardown must request volume removal (docker compose down -v)',
+    ).toBe(true);
+  });
+});
+
+describe('e2e-runner runDown', () => {
+  it('removes the docker volume when tearing the testbed down', async () => {
+    vi.mocked(readRunnerState).mockResolvedValueOnce({ projectName: 'test-project', dbPort: 65000, appPort: 65001 });
+
+    await runDown();
+
+    expect(dockerDownCalls.length, 'down should run a docker-down task').toBeGreaterThan(0);
+    expect(
+      dockerDownCalls.every((c) => c.removeVolumes),
+      'down must request volume removal (docker compose down -v)',
+    ).toBe(true);
   });
 });

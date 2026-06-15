@@ -1,6 +1,6 @@
 {
   "name": "@wesven/testing",
-  "version": "0.1.0",
+  "version": "0.1.9",
   "description": "Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Postgres + Vitest + Cypress + MSW). Compiled with tsup; ships ESM .js + .d.ts.",
   "license": "MIT",
   "type": "module",

@@ -209,7 +209,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
     const cleanupTasks = new Listr<E2eContext>([
       stopAppTask(),
-      dockerDownTask(env, projectName, compose, false),
+      dockerDownTask(env, projectName, compose, true),
       stopMockTask(server),
     ]);
 
@@ -449,7 +449,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
     }
 
     const env = buildEnv(state.dbPort, state.appPort ?? 0, opts.extraEnv);
-    const tasks = new Listr<E2eContext>([dockerDownTask(env, state.projectName, compose, false)]);
+    const tasks = new Listr<E2eContext>([dockerDownTask(env, state.projectName, compose, true)]);
 
     try {
       if (opts.preTeardown) await opts.preTeardown();
