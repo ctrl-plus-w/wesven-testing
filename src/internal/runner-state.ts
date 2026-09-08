@@ -16,6 +16,11 @@ export interface RunnerState {
   dbPort: number;
   appPort?: number;
   pid?: number;
+  /**
+   * Process-group id of the web application spawned by `:up`. Persisted so a later `:down` —
+   * a different process entirely — can still reap the tree.
+   */
+  appPid?: number;
   startedAt?: number;
 }
 
@@ -42,16 +47,30 @@ export const clearRunnerState = async (runner: RunnerName): Promise<void> => {
   await rm(stateFilePath(runner), { force: true });
 };
 
-export const updateRunnerStatePid = async (runner: RunnerName, pid: number | null): Promise<void> => {
+type RunnerStatePidKey = 'pid' | 'appPid';
+
+const patchRunnerStatePid = async (
+  runner: RunnerName,
+  key: RunnerStatePidKey,
+  value: number | undefined,
+): Promise<void> => {
   const current = await readRunnerState(runner);
   if (!current) return;
-  if (pid === null) {
-    const { pid: _omit, ...rest } = current;
-    await writeRunnerState(runner, rest);
-  } else {
-    await writeRunnerState(runner, { ...current, pid });
-  }
+  const { [key]: _omit, ...rest } = current;
+  await writeRunnerState(runner, value === undefined ? rest : { ...rest, [key]: value });
 };
+
+/**
+ * Records (or clears, with `null`) the pid of the runner process itself.
+ */
+export const updateRunnerStatePid = (runner: RunnerName, pid: number | null): Promise<void> =>
+  patchRunnerStatePid(runner, 'pid', pid ?? undefined);
+
+/**
+ * Records (or clears, with `undefined`) the process-group id of the spawned web application.
+ */
+export const updateRunnerStateAppPid = (runner: RunnerName, appPid: number | undefined): Promise<void> =>
+  patchRunnerStatePid(runner, 'appPid', appPid);
 
 /**
  * Returns true when a process with the given PID is alive (or owned by another user).

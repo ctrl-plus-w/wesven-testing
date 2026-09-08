@@ -1,5 +1,5 @@
 import { Command } from '@commander-js/extra-typings';
-import { type ExecaChildProcess, execa } from 'execa';
+import { execa } from 'execa';
 import { Listr } from 'listr2';
 import type { SetupServer } from 'msw/node';
 import waitOn from 'wait-on';
@@ -15,6 +15,7 @@ import {
   migrateTask,
   resetTask,
 } from '@/internal/listr-tasks';
+import { killProcessGroupNow, reapProcessGroup } from '@/internal/reap-process-group';
 import { printReady, printStatus } from '@/internal/runner-print';
 import {
   buildProjectName,
@@ -22,6 +23,7 @@ import {
   isPidAlive,
   type RunnerState,
   readRunnerState,
+  updateRunnerStateAppPid,
   updateRunnerStatePid,
   writeRunnerState,
 } from '@/internal/runner-state';
@@ -53,7 +55,7 @@ export interface E2eRunnerOptions {
 }
 
 interface E2eContext extends ListrCtx {
-  webAppProcess?: ExecaChildProcess;
+  webAppPgid?: number;
 }
 
 interface E2eRunnerEnv extends BaseRunnerEnv {
@@ -93,10 +95,13 @@ const buildAppTask = (env: E2eRunnerEnv, enabled: boolean) => ({
 const startAppTask = (env: E2eRunnerEnv, appPort: number) => ({
   title: `Starting the application (port ${appPort})`,
   task: async (ctx: E2eContext, task: AnyTask) => {
-    const webProcess = execa('pnpm', ['run', 'start'], { env });
+    const webProcess = execa('pnpm', ['run', 'start'], { env, detached: true });
+    // The group is killed on teardown; swallow the resulting non-zero exit.
+    webProcess.catch(() => {});
     webProcess.stdout?.pipe(task.stdout());
     webProcess.stderr?.pipe(task.stdout());
-    ctx.webAppProcess = webProcess;
+    ctx.webAppPgid = webProcess.pid;
+    await updateRunnerStateAppPid(RUNNER, webProcess.pid);
 
     await waitOn({ resources: [`tcp:${appPort}`], timeout: 60 * 1000 });
   },
@@ -110,9 +115,7 @@ const startMockTask = (server: SetupServer) => ({
 
 const stopAppTask = () => ({
   title: 'Stopping the web application',
-  task: (ctx: E2eContext) => {
-    if (ctx.webAppProcess) ctx.webAppProcess.kill();
-  },
+  task: (ctx: E2eContext) => reapProcessGroup({ pgid: ctx.webAppPgid }),
 });
 
 const stopMockTask = (server: SetupServer) => ({
@@ -126,6 +129,36 @@ const buildCypressArgs = (options: { open: boolean; cypressArgs: readonly string
   options.open ? 'open' : 'run',
   ...options.cypressArgs,
 ];
+
+/**
+ * Registers every exit path that can strand a spawned application: the three terminating signals
+ * (SIGHUP included — closing a terminal pane sends nothing else), an uncaught exception, and a
+ * synchronous `exit` net for the paths that reach neither.
+ *
+ * Returns the run-once teardown so a caller that also finishes normally can share the same guard
+ * rather than keeping a second one of its own.
+ */
+const installTeardownOnExit = (params: { teardown: () => Promise<void>; pgid: () => number | undefined }) => {
+  let ran = false;
+  const teardownOnce = async () => {
+    if (ran) return;
+    ran = true;
+    await params.teardown();
+    process.exit();
+  };
+
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.once(signal, teardownOnce);
+
+  process.once('uncaughtException', (err) => {
+    console.error(err);
+    process.exitCode = 1;
+    void teardownOnce();
+  });
+
+  process.once('exit', () => killProcessGroupNow(params.pgid()));
+
+  return teardownOnce;
+};
 
 const printReadyBlock = (params: {
   mode: 'default' | 'up';
@@ -213,6 +246,20 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
       stopMockTask(server),
     ]);
 
+    const teardown = installTeardownOnExit({
+      pgid: () => tasks.ctx?.webAppPgid,
+      teardown: async () => {
+        if (opts.preTeardown) {
+          try {
+            await opts.preTeardown();
+          } catch (err) {
+            console.error(err);
+          }
+        }
+        await cleanupTasks.run(tasks.ctx);
+      },
+    });
+
     try {
       await tasks.run();
       if (opts.postSetup) await opts.postSetup();
@@ -226,41 +273,28 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
       console.error(err);
       process.exitCode = 1;
     } finally {
-      if (opts.preTeardown) {
-        try {
-          await opts.preTeardown();
-        } catch (err) {
-          console.error(err);
-        }
-      }
-      await cleanupTasks.run(tasks.ctx);
-
-      process.exit();
+      await teardown();
     }
   };
 
   const blockUntilSignal = async (params: { webContext: E2eContext }): Promise<never> => {
     const cleanupTasks = new Listr<E2eContext>([stopAppTask(), stopMockTask(server)]);
 
-    let cleanupRan = false;
-    const teardown = async () => {
-      if (cleanupRan) return;
-      cleanupRan = true;
-      try {
-        await cleanupTasks.run(params.webContext);
-      } catch (err) {
-        console.error(err);
-      }
-      try {
-        await updateRunnerStatePid(RUNNER, null);
-      } catch (err) {
-        console.error(err);
-      }
-      process.exit();
-    };
-
-    process.once('SIGINT', teardown);
-    process.once('SIGTERM', teardown);
+    installTeardownOnExit({
+      pgid: () => params.webContext.webAppPgid,
+      teardown: async () => {
+        try {
+          await cleanupTasks.run(params.webContext);
+        } catch (err) {
+          console.error(err);
+        }
+        try {
+          await updateRunnerStatePid(RUNNER, null);
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    });
 
     await new Promise<void>(() => {});
     throw new Error('blockUntilSignal: unreachable');
@@ -328,7 +362,8 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
     exportEnv(env);
     const startedAt = Date.now();
 
-    await writeRunnerState(RUNNER, { ...state, pid: process.pid, startedAt });
+    const { appPid: _staleAppPid, ...reusable } = state;
+    await writeRunnerState(RUNNER, { ...reusable, pid: process.pid, startedAt });
 
     if (opts.preSetup) await opts.preSetup();
 
@@ -391,6 +426,9 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
           console.error(`e2e-runner: another :up appears to be running (pid ${state.pid}). Run :down first.`);
           process.exit(1);
         }
+
+        await reapProcessGroup({ pgid: state.appPid });
+
         try {
           await runReuseUp(state);
           return;
@@ -449,11 +487,11 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
     }
 
     const env = buildEnv(state.dbPort, state.appPort ?? 0, opts.extraEnv);
-    const tasks = new Listr<E2eContext>([dockerDownTask(env, state.projectName, compose, true)]);
+    const tasks = new Listr<E2eContext>([stopAppTask(), dockerDownTask(env, state.projectName, compose, true)]);
 
     try {
       if (opts.preTeardown) await opts.preTeardown();
-      await tasks.run();
+      await tasks.run({ webAppPgid: state.appPid });
     } catch (err) {
       console.error(err);
       process.exitCode = 1;
