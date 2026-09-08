@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**/*.{ts,tsx,css,js,json,yaml,md}"]
+    "includes": ["**/*.{ts,tsx,css,js,json,yaml,md}", "!.claude"]
   },
   "formatter": {
     "enabled": true,
