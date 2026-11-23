@@ -514,6 +514,21 @@ describe('e2e-runner app port already in use', () => {
     expect(execaCalls, 'nothing should be built for a run that cannot start').toEqual([]);
   });
 
+  it('fails a fresh :up before writing state or starting the database', async () => {
+    vi.mocked(isPortInUse).mockResolvedValue(true);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runUp(() => vi.mocked(process.exit).mock.calls.length > 0, ':up exit');
+
+    expect(
+      vi.mocked(writeRunnerState),
+      'a state file would point :run at a testbed that never came up',
+    ).not.toHaveBeenCalled();
+    expect(dockerUpCalls, 'no database should be started for a testbed that cannot start').toEqual([]);
+    expect(execaCalls, 'nothing should be built for a testbed that cannot start').toEqual([]);
+    expect(process.exitCode, ':up must exit non-zero').toBe(1);
+  });
+
   it('does not start the app of a reused testbed whose port is now taken', async () => {
     vi.mocked(readRunnerState).mockResolvedValue({
       projectName: 'test-project',
@@ -623,6 +638,9 @@ describe('e2e-runner app exiting before it is ready', () => {
     vi.mocked(waitOn).mockImplementation(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
   };
 
+  const killedBy = (signal: NodeJS.Signals) =>
+    Object.assign(new Error(`Command was killed with ${signal}: pnpm run start`), { signal, stderr: '' });
+
   const reportedErrors = () =>
     vi
       .mocked(console.error)
@@ -689,5 +707,53 @@ describe('e2e-runner app exiting before it is ready', () => {
       reportedErrors().map((err) => err.message),
       'a spawn failure has no exit code to report, so its own message is kept',
     ).toContain('Command failed with ENOENT: pnpm run start');
+  });
+
+  it('reports the signal that killed the app', async () => {
+    appChild = () => asExecaChild(Promise.reject(killedBy('SIGKILL')));
+    portAnswersLater();
+
+    await runDefault();
+
+    const message = reportedErrors()
+      .map((err) => err.message)
+      .find((text) => text.includes('before port 65000 was ready'));
+    expect(message, 'a killed app has a signal, not an exit code').toContain('was killed by SIGKILL');
+    expect(message, 'there is no exit code to report').not.toContain('exited with code');
+    expect(process.exitCode, 'the run must fail').toBe(1);
+  });
+
+  it('does not fail a run whose app is stopped by teardown after it was ready', async () => {
+    let stopApp: (error: Error) => void = () => {};
+    appChild = () =>
+      asExecaChild(
+        new Promise((_resolve, reject) => {
+          stopApp = reject;
+        }),
+      );
+    vi.mocked(reapProcessGroup).mockImplementation(async () => {
+      stopApp(killedBy('SIGTERM'));
+    });
+    const unhandled: unknown[] = [];
+    const recordUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', recordUnhandled);
+
+    try {
+      await runDefault();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', recordUnhandled);
+    }
+
+    expect(vi.mocked(reapProcessGroup), 'teardown should stop the app').toHaveBeenCalled();
+    expect(
+      execaCalls.find((c) => c.argv.includes('cypress')),
+      'the app was ready, so cypress should run',
+    ).toBeDefined();
+    expect(reportedErrors(), 'an app stopped by teardown did not fail to start').toEqual([]);
+    expect(unhandled, 'the exit watcher outlives the readiness race and must not reject unhandled').toEqual([]);
+    expect(process.exitCode, 'the run must pass').toBe(exitCodeBefore);
   });
 });
