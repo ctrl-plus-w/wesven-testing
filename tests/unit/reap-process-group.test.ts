@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
 
 import { killProcessGroupNow, reapProcessGroup } from '@/internal/reap-process-group';
@@ -46,6 +49,26 @@ describe('reapProcessGroup', () => {
     await reapProcessGroup({ pgid: 4242, timeoutMs: 20, pollMs: 5 });
 
     expect(signalsSent(), 'a group that ignores SIGTERM must be SIGKILLed').toContain('SIGKILL');
+  });
+
+  it('keeps a process with nothing else to do alive until the group is reaped', () => {
+    const reapModule = fileURLToPath(new URL('../../src/internal/reap-process-group.ts', import.meta.url));
+    const script = `
+      import { spawn } from 'node:child_process';
+      import { reapProcessGroup } from ${JSON.stringify(reapModule)};
+      const child = spawn('sh', ['-c', 'trap "" TERM; sleep 30'], { detached: true, stdio: 'ignore' });
+      child.unref();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await reapProcessGroup({ pgid: child.pid, timeoutMs: 300, pollMs: 20 });
+      console.log('reaped');
+    `;
+
+    const run = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+
+    expect(run.stdout.trim(), `the teardown must not exit mid-wait\n${run.stderr}`).toBe('reaped');
   });
 
   it('does not escalate when the group exits during the grace period', async () => {

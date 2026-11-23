@@ -26,7 +26,7 @@ const signalGroup = (pgid: number, signal: NodeJS.Signals | 0): boolean => {
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
-    setTimeout(resolve, ms).unref();
+    setTimeout(resolve, ms);
   });
 
 const waitForGroupExit = async (pgid: number, timeoutMs: number, pollMs: number): Promise<void> => {
