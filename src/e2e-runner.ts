@@ -112,6 +112,16 @@ const assertAppPortFree = async (appPort: number, hint: string) => {
   if (await isPortInUse(appPort)) throw new AppPortInUseError(`e2e-runner: port ${appPort} is already in use. ${hint}`);
 };
 
+/**
+ * Tells a caller still pinning the app with `PORT` that it is not read. Quiet for the `PORT` of a
+ * wesven task, which equals `WESVEN_PORT_BASE` and belongs to the task's dev server.
+ */
+const warnIgnoredPort = () => {
+  const { PORT, E2E_APP_PORT, WESVEN_PORT_BASE } = process.env;
+  if (!PORT || E2E_APP_PORT || PORT === WESVEN_PORT_BASE) return;
+  console.warn(`e2e-runner: PORT=${PORT} is not read. Set E2E_APP_PORT to pin the app port.`);
+};
+
 const tailLines = (text: string) => text.trimEnd().split('\n').slice(-EXIT_OUTPUT_TAIL_LINES).join('\n');
 
 /**
@@ -239,6 +249,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
   const server = opts.mswServer;
 
   const runDefault = async (options: { open: boolean; skipBuild: boolean; cypressArgs: readonly string[] }) => {
+    warnIgnoredPort();
     const { port: dbPort, fromEnv: dbFromEnv } = await resolvePort('TEST_DB_PORT');
     const { port: appPort, fromEnv: appFromEnv } = await resolvePort('E2E_APP_PORT');
     await assertAppPortFree(appPort, NEW_APP_PORT_HINT);
@@ -347,6 +358,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
   };
 
   const runFreshUp = async (options: { skipBuild: boolean }) => {
+    warnIgnoredPort();
     const { port: dbPort, fromEnv: dbFromEnv } = await resolvePort('TEST_DB_PORT');
     const { port: appPort, fromEnv: appFromEnv } = await resolvePort('E2E_APP_PORT');
     await assertAppPortFree(appPort, NEW_APP_PORT_HINT);

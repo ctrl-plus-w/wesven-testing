@@ -500,6 +500,62 @@ describe('e2e-runner app port', () => {
 
     expect(process.env.PORT, 'hooks and later children of the runner must not see the app port as PORT').toBe('4100');
   });
+
+  describe('a shell PORT that no longer pins the app', () => {
+    let warnings: string[];
+
+    const ignoredPortWarnings = () => warnings.filter((line) => line.includes('E2E_APP_PORT'));
+
+    beforeEach(() => {
+      warnings = [];
+      vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      });
+      vi.stubEnv('PORT', '4100');
+      vi.stubEnv('E2E_APP_PORT', undefined);
+      vi.stubEnv('WESVEN_PORT_BASE', undefined);
+    });
+
+    it('is named on a default run, with the variable that replaces it', async () => {
+      await runDefault();
+
+      expect(ignoredPortWarnings(), 'a caller pinning with PORT would get another app port without a word').toEqual([
+        expect.stringContaining('PORT=4100 is not read'),
+      ]);
+    });
+
+    it('is named on a fresh :up', async () => {
+      silenceProcessExit();
+
+      await runUp(() => addedListeners('SIGHUP') > 0, 'testbed up');
+
+      expect(ignoredPortWarnings(), ':up is where the old skill pins PORT').toHaveLength(1);
+    });
+
+    it('is not named for the PORT of a wesven task, which belongs to its dev server', async () => {
+      vi.stubEnv('WESVEN_PORT_BASE', '4100');
+
+      await runDefault();
+
+      expect(ignoredPortWarnings(), 'every run in a task would print it').toEqual([]);
+    });
+
+    it('is named for a PORT set over the one of a wesven task', async () => {
+      vi.stubEnv('WESVEN_PORT_BASE', '4000');
+
+      await runDefault();
+
+      expect(ignoredPortWarnings(), 'this PORT was set to pin the app').toHaveLength(1);
+    });
+
+    it('is not named when E2E_APP_PORT pins the app', async () => {
+      vi.stubEnv('E2E_APP_PORT', '4321');
+
+      await runDefault();
+
+      expect(ignoredPortWarnings(), 'the app port is pinned the new way').toEqual([]);
+    });
+  });
 });
 
 describe('e2e-runner app port already in use', () => {

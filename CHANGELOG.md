@@ -6,7 +6,7 @@ All notable changes to `@wesven/testing` are documented here. Format: hand-writt
 
 ### Breaking
 
-- `e2e-runner` takes a pinned app port from `E2E_APP_PORT` and no longer reads `PORT`. It sets `PORT` only for `pnpm run start`: the runner's own `process.env`, the build, the migrations and Cypress no longer get the app port as `PORT` (`NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL` still carry it). Before, a `PORT` in the shell, such as the one a wesven task sets for its dev server, put the app on that port, and Cypress could end up testing the dev server.
+- `e2e-runner` takes a pinned app port from `E2E_APP_PORT` and no longer reads `PORT`. It sets `PORT` only for `pnpm run start`: the runner's own `process.env`, the build, the migrations and Cypress no longer get the app port as `PORT` (`NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL` still carry it). Before, a `PORT` in the shell, such as the one a wesven task sets for its dev server, put the app on that port, and Cypress could end up testing the dev server. When `PORT` is set without `E2E_APP_PORT`, the runner prints a warning, except for the `PORT` of a wesven task (equal to `WESVEN_PORT_BASE`).
 
 ```diff
 - PORT=3001 pnpm test:e2e

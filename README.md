@@ -129,7 +129,7 @@ The runners pick free host ports. To pin one, set:
 - `TEST_DB_PORT`: the test database (both runners)
 - `E2E_APP_PORT`: the app the e2e runner starts
 
-The e2e runner does not read `PORT`. It sets `PORT` only for the app it starts (`pnpm run start`), so a `PORT` already in the shell, such as the one a wesven task sets for its dev server, stays with that server. The runner fails before starting the app when something already answers on the app port. When `:up` reuses a saved testbed, it keeps that testbed: free the port and run `:up` again, or run `:down` to remove it. The runner also fails when the app exits before its port opens, and shows the exit code and the last lines of its stderr.
+The e2e runner does not read `PORT`. It sets `PORT` only for the app it starts (`pnpm run start`), so a `PORT` already in the shell, such as the one a wesven task sets for its dev server, stays with that server. When `PORT` is set and `E2E_APP_PORT` is not, the runner warns that it does not read `PORT`, except for the `PORT` of a wesven task (equal to `WESVEN_PORT_BASE`). The runner fails before starting the app when something already answers on the app port. When `:up` reuses a saved testbed, it keeps that testbed: free the port and run `:up` again, or run `:down` to remove it. The runner also fails when the app exits before its port opens, and shows the exit code and the last lines of its stderr.
 
 ## Versioning
 
