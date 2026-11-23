@@ -1,10 +1,10 @@
 import { Command } from '@commander-js/extra-typings';
-import { execa } from 'execa';
+import { type ExecaChildProcess, type ExecaError, type ExecaReturnValue, execa } from 'execa';
 import { Listr } from 'listr2';
 import type { SetupServer } from 'msw/node';
 import waitOn from 'wait-on';
 
-import { resolvePort } from '@/internal/get-available-port';
+import { isPortInUse, resolvePort } from '@/internal/get-available-port';
 import {
   type AnyTask,
   type BaseRunnerEnv,
@@ -31,6 +31,8 @@ import {
 import { composeFilePath } from '@/compose-file';
 
 const RUNNER = 'e2e' as const;
+
+const EXIT_OUTPUT_TAIL_LINES = 20;
 
 /**
  * Options accepted by `createE2eRunner`.
@@ -59,7 +61,6 @@ interface E2eContext extends ListrCtx {
 }
 
 interface E2eRunnerEnv extends BaseRunnerEnv {
-  PORT: string;
   BETTER_AUTH_URL: string;
   NEXT_PUBLIC_APP_URL: string;
 }
@@ -71,7 +72,6 @@ const buildEnv = (dbPort: number, appPort: number, extraEnv: Record<string, stri
     NODE_ENV: 'test',
     DATABASE_URL: `postgres://postgres:postgres@localhost:${dbPort}/main`,
     TEST_DB_PORT: String(dbPort),
-    PORT: String(appPort),
     BETTER_AUTH_URL: appUrl,
     NEXT_PUBLIC_APP_URL: appUrl,
     ...extraEnv,
@@ -92,10 +92,40 @@ const buildAppTask = (env: E2eRunnerEnv, enabled: boolean) => ({
   enabled: () => enabled,
 });
 
+/**
+ * Refuses an app port that something already answers on: the readiness wait only checks that
+ * the port accepts connections, so it would pass on that server and Cypress would test it.
+ */
+const assertAppPortFree = async (appPort: number) => {
+  if (await isPortInUse(appPort))
+    throw new Error(
+      `e2e-runner: port ${appPort} is already in use. Stop what listens on it or set E2E_APP_PORT to a free port, so the tests do not run against it.`,
+    );
+};
+
+const tailLines = (text: string) => text.trimEnd().split('\n').slice(-EXIT_OUTPUT_TAIL_LINES).join('\n');
+
+/**
+ * Settles only by rejecting, once the app process has exited. Raced against the readiness wait:
+ * an app that is gone cannot be what answers on its port.
+ */
+const rejectWhenAppExits = async (child: ExecaChildProcess, appPort: number): Promise<never> => {
+  const outcome: ExecaReturnValue = await child.catch((error: ExecaError) => {
+    if (error.signal === undefined && typeof error.exitCode !== 'number') throw error;
+    return error;
+  });
+  const status = outcome.signal ? `was killed by ${outcome.signal}` : `exited with code ${outcome.exitCode}`;
+  const stderrTail = tailLines(outcome.stderr ?? '');
+  const reason = `e2e-runner: the application ${status} before port ${appPort} was ready.`;
+  throw new Error(stderrTail ? `${reason} Last lines of its stderr:\n${stderrTail}` : reason);
+};
+
 const startAppTask = (env: E2eRunnerEnv, appPort: number) => ({
   title: `Starting the application (port ${appPort})`,
   task: async (ctx: E2eContext, task: AnyTask) => {
-    const webProcess = execa('pnpm', ['run', 'start'], { env, detached: true });
+    await assertAppPortFree(appPort);
+
+    const webProcess = execa('pnpm', ['run', 'start'], { env: { ...env, PORT: String(appPort) }, detached: true });
     // The group is killed on teardown; swallow the resulting non-zero exit.
     webProcess.catch(() => {});
     webProcess.stdout?.pipe(task.stdout());
@@ -103,7 +133,10 @@ const startAppTask = (env: E2eRunnerEnv, appPort: number) => ({
     ctx.webAppPgid = webProcess.pid;
     await updateRunnerStateAppPid(RUNNER, webProcess.pid);
 
-    await waitOn({ resources: [`tcp:${appPort}`], timeout: 60 * 1000 });
+    await Promise.race([
+      waitOn({ resources: [`tcp:${appPort}`], timeout: 60 * 1000 }),
+      rejectWhenAppExits(webProcess, appPort),
+    ]);
   },
   rendererOptions: { outputBar: Number.POSITIVE_INFINITY, persistentOutput: true },
 });
@@ -198,7 +231,8 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
   const runDefault = async (options: { open: boolean; skipBuild: boolean; cypressArgs: readonly string[] }) => {
     const { port: dbPort, fromEnv: dbFromEnv } = await resolvePort('TEST_DB_PORT');
-    const { port: appPort, fromEnv: appFromEnv } = await resolvePort('PORT');
+    const { port: appPort, fromEnv: appFromEnv } = await resolvePort('E2E_APP_PORT');
+    await assertAppPortFree(appPort);
     const env = buildEnv(dbPort, appPort, opts.extraEnv);
     exportEnv(env);
     const projectName = await buildProjectName(RUNNER);
@@ -302,7 +336,8 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
   const runFreshUp = async (options: { skipBuild: boolean }) => {
     const { port: dbPort, fromEnv: dbFromEnv } = await resolvePort('TEST_DB_PORT');
-    const { port: appPort, fromEnv: appFromEnv } = await resolvePort('PORT');
+    const { port: appPort, fromEnv: appFromEnv } = await resolvePort('E2E_APP_PORT');
+    await assertAppPortFree(appPort);
     const env = buildEnv(dbPort, appPort, opts.extraEnv);
     exportEnv(env);
     const projectName = await buildProjectName(RUNNER);
@@ -510,7 +545,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
   const program = new Command()
     .name('e2e-runner')
-    .description('Run the end-to-end tests. Set TEST_DB_PORT or PORT to pin specific host ports.')
+    .description('Run the end-to-end tests. Set TEST_DB_PORT or E2E_APP_PORT to pin specific host ports.')
     .enablePositionalOptions();
 
   program
@@ -526,7 +561,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
 
   program
     .command('up')
-    .description('Bring the testbed up on dynamic ports (or $TEST_DB_PORT / $PORT) and block until killed')
+    .description('Bring the testbed up on dynamic ports (or $TEST_DB_PORT / $E2E_APP_PORT) and block until killed')
     .option('--skip-build', 'Skip the build step')
     .action(async (options) => {
       await runUp({ skipBuild: !!options.skipBuild });

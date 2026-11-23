@@ -92,7 +92,7 @@ export const printReady = (params: ReadyParams) => {
     { label: 'url', value: renderUrl(params.dbUrl) },
   ];
   if (params.appPort !== undefined) {
-    fields.push({ label: 'app port', value: portValue(params.appPort, params.appFromEnv ?? false, 'PORT') });
+    fields.push({ label: 'app port', value: portValue(params.appPort, params.appFromEnv ?? false, 'E2E_APP_PORT') });
     if (params.appUrl) fields.push({ label: 'url', value: renderUrl(params.appUrl) });
   }
   fields.push({ label: 'proj', value: params.projectName });

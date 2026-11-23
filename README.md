@@ -122,6 +122,15 @@ The runner lifecycle order is fixed: `preSetup` → docker up → migrate → re
 
 Vitest configs are extended via `mergeConfig`. Cypress is extended via the factory's options.
 
+## Ports
+
+The runners pick free host ports. To pin one, set:
+
+- `TEST_DB_PORT`: the test database (both runners)
+- `E2E_APP_PORT`: the app the e2e runner starts
+
+The e2e runner does not read `PORT`. It sets `PORT` only for the app it starts (`pnpm run start`), so a `PORT` already in the shell, such as the one a wesven task sets for its dev server, stays with that server. The runner fails before starting the app when something already answers on the app port. It also fails when the app exits before its port opens, and shows the exit code and the last lines of its stderr.
+
 ## Versioning
 
 Pre-1.0: minor bumps may include breaking changes; patches are bug fixes only. 1.0 will ship after a second consumer (besides the template) has migrated and two consecutive minor bumps have passed without breakage. Releases are a single `git tag && git push --tags`. See `CHANGELOG.md` for migration diffs.

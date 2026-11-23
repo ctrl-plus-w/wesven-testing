@@ -15,6 +15,7 @@ vi.mock('wait-on', () => ({
 }));
 
 vi.mock('@/internal/get-available-port', () => ({
+  isPortInUse: vi.fn(async () => false),
   resolvePort: vi.fn(async () => ({ port: 65000, fromEnv: false })),
 }));
 
@@ -60,7 +61,9 @@ vi.mock('@/compose-file', () => ({
 }));
 
 import { execa } from 'execa';
+import waitOn from 'wait-on';
 
+import { isPortInUse, resolvePort } from '@/internal/get-available-port';
 import { reapProcessGroup } from '@/internal/reap-process-group';
 import {
   clearRunnerState,
@@ -90,6 +93,8 @@ const nextTick = () => ++tickCounter;
 let listrRuns: ListrRunEntry[];
 let execaCalls: ExecaCallEntry[];
 let hangingCommandArg: string | null;
+let appChild: () => FakeExecaChild;
+let exitCodeBefore: typeof process.exitCode;
 
 type FakeExecaChild = Promise<unknown> & {
   kill?: () => void;
@@ -111,11 +116,16 @@ const makeExecaResult = () => asExecaChild(Promise.resolve({ exitCode: 0, stdout
 
 const makePendingExecaResult = () => asExecaChild(new Promise(() => {}));
 
+const isStartCommand = (cmd: string, args: readonly string[] | undefined) =>
+  [cmd, ...(args ?? [])].join(' ') === 'pnpm run start';
+
 beforeEach(() => {
   tickCounter = 0;
   listrRuns = [];
   execaCalls = [];
   hangingCommandArg = null;
+  appChild = makePendingExecaResult;
+  exitCodeBefore = process.exitCode;
   dockerDownCalls.length = 0;
 
   const originalRun = Listr.prototype.run;
@@ -132,6 +142,7 @@ beforeEach(() => {
 
   vi.mocked(execa).mockImplementation(((cmd: string, args?: readonly string[], options?: Record<string, unknown>) => {
     execaCalls.push({ argv: [cmd, ...(args ?? [])], options: options ?? {}, tick: nextTick() });
+    if (isStartCommand(cmd, args)) return appChild();
     if (hangingCommandArg !== null && (args ?? []).includes(hangingCommandArg)) return makePendingExecaResult();
     return makeExecaResult();
   }) as unknown as typeof execa);
@@ -146,6 +157,8 @@ beforeEach(() => {
 afterEach(() => {
   restoreLifecycleListeners();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  process.exitCode = exitCodeBefore;
 });
 
 const fakeMswServer = (): SetupServer =>
@@ -419,5 +432,180 @@ describe('e2e-runner runDown', () => {
     await runDown();
 
     expect(dockerDownCalls.length, 'an absent appPid must not abort the rest of teardown').toBeGreaterThan(0);
+  });
+});
+
+describe('e2e-runner app port', () => {
+  const useRealPortResolution = async () => {
+    const actual = await vi.importActual<typeof import('@/internal/get-available-port')>(
+      '@/internal/get-available-port',
+    );
+    vi.mocked(resolvePort).mockImplementation(actual.resolvePort);
+  };
+
+  const cypressCall = () => execaCalls.find((c) => c.argv.includes('cypress'));
+
+  const waitedResources = () => vi.mocked(waitOn).mock.calls.flatMap(([options]) => options.resources);
+
+  it('pins the app port from E2E_APP_PORT', async () => {
+    await useRealPortResolution();
+    vi.stubEnv('E2E_APP_PORT', '4321');
+    vi.stubEnv('PORT', undefined);
+
+    await runDefault();
+
+    expect(startAppCall()?.options.env, 'the app must listen on the pinned port').toHaveProperty('PORT', '4321');
+    expect(waitedResources(), 'readiness must be awaited on the pinned port').toContain('tcp:4321');
+    expect(cypressCall()?.options.env, 'cypress must target the pinned port').toHaveProperty(
+      'CYPRESS_BASE_URL',
+      'http://localhost:4321',
+    );
+  });
+
+  it("does not put the app on the shell's PORT, which a wesven task gives its dev server", async () => {
+    await useRealPortResolution();
+    vi.stubEnv('E2E_APP_PORT', undefined);
+    vi.stubEnv('PORT', '4100');
+
+    await runDefault();
+
+    expect(startAppCall()?.options.env, 'the app must get a port of its own').not.toHaveProperty('PORT', '4100');
+    expect(waitedResources(), 'an open 4100 is the dev server, not the app').not.toContain('tcp:4100');
+    expect(cypressCall()?.options.env, 'cypress must not test the dev server').not.toHaveProperty(
+      'CYPRESS_BASE_URL',
+      'http://localhost:4100',
+    );
+  });
+
+  it('sets PORT for the app process only', async () => {
+    await runDefault();
+
+    expect(startAppCall()?.options.env, 'the app reads its port from PORT').toHaveProperty('PORT', '65000');
+    for (const call of execaCalls.filter((c) => c !== startAppCall())) {
+      expect(call.options.env, `${call.argv.join(' ')} must not be handed the app's PORT`).not.toHaveProperty('PORT');
+    }
+  });
+
+  it("leaves the runner's own PORT as the shell set it", async () => {
+    vi.stubEnv('PORT', '4100');
+
+    await runDefault();
+
+    expect(process.env.PORT, 'hooks and later children of the runner must not see the app port as PORT').toBe('4100');
+  });
+});
+
+describe('e2e-runner app port already in use', () => {
+  it('fails before building or starting anything on a default run', async () => {
+    vi.mocked(isPortInUse).mockResolvedValue(true);
+
+    await expect(makeRunner().parseAsync([], { from: 'user' }), 'the run must fail loudly').rejects.toThrow(
+      /port 65000 is already in use/,
+    );
+
+    expect(startAppCall(), 'whatever answers on the port would be tested instead of the app').toBeUndefined();
+    expect(execaCalls, 'nothing should be built for a run that cannot start').toEqual([]);
+  });
+
+  it('does not start the app of a reused testbed whose port is now taken', async () => {
+    vi.mocked(readRunnerState).mockResolvedValue({
+      projectName: 'test-project',
+      dbPort: 65000,
+      appPort: 65001,
+      pid: 4242,
+      appPid: APP_PID,
+    });
+    vi.mocked(isPidAlive).mockReturnValue(false);
+    vi.mocked(isPortInUse).mockResolvedValue(true);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runUp(
+      () => vi.mocked(process.exit).mock.calls.length > 0 || startAppCall() !== undefined,
+      'refusal or app start',
+    );
+
+    expect(startAppCall(), 'the reused port answers already, so readiness would pass on it').toBeUndefined();
+    expect(process.exitCode, ':up must exit non-zero').toBe(1);
+  });
+});
+
+describe('e2e-runner app exiting before it is ready', () => {
+  const failedStart = (stderr: string) =>
+    asExecaChild(
+      Promise.reject(
+        Object.assign(new Error('Command failed with exit code 1: pnpm run start'), { exitCode: 1, stderr }),
+      ),
+    );
+
+  const portAnswersLater = () => {
+    vi.mocked(waitOn).mockImplementation(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+  };
+
+  const reportedErrors = () =>
+    vi
+      .mocked(console.error)
+      .mock.calls.flat()
+      .filter((arg): arg is Error => arg instanceof Error);
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('stops before cypress when the app dies while another server answers on its port', async () => {
+    appChild = () => failedStart('Error: listen EADDRINUSE: address already in use :::65000');
+    portAnswersLater();
+
+    await runDefault();
+
+    expect(
+      execaCalls.find((c) => c.argv.includes('cypress')),
+      'cypress would run against the server that holds the port',
+    ).toBeUndefined();
+    expect(process.exitCode, 'the run must fail').toBe(1);
+  });
+
+  it('treats an app that exits cleanly before it is ready as a failure', async () => {
+    appChild = () => asExecaChild(Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }));
+    portAnswersLater();
+
+    await runDefault();
+
+    expect(
+      execaCalls.find((c) => c.argv.includes('cypress')),
+      'no app is left to test',
+    ).toBeUndefined();
+    expect(process.exitCode, 'the run must fail').toBe(1);
+  });
+
+  it('reports the exit code and the end of the app stderr', async () => {
+    const stderr = ['first-line-of-output', ...Array.from({ length: 30 }, (_, i) => `noise ${i}`), 'EADDRINUSE'];
+    appChild = () => failedStart(stderr.join('\n'));
+    portAnswersLater();
+
+    await runDefault();
+
+    const message = reportedErrors()
+      .map((err) => err.message)
+      .find((text) => text.includes('before port 65000 was ready'));
+    expect(message, 'the failure should name the app and its port').toBeDefined();
+    expect(message, 'the exit code says how it died').toContain('exited with code 1');
+    expect(message, 'the last stderr lines say why').toContain('EADDRINUSE');
+    expect(message, 'only the tail is kept').not.toContain('first-line-of-output');
+  });
+
+  it('reports an app that could not be spawned with its own error', async () => {
+    appChild = () => asExecaChild(Promise.reject(new Error('Command failed with ENOENT: pnpm run start')));
+    portAnswersLater();
+
+    await runDefault();
+
+    expect(
+      execaCalls.find((c) => c.argv.includes('cypress')),
+      'nothing of ours answers on the port',
+    ).toBeUndefined();
+    expect(
+      reportedErrors().map((err) => err.message),
+      'a spawn failure has no exit code to report, so its own message is kept',
+    ).toContain('Command failed with ENOENT: pnpm run start');
   });
 });

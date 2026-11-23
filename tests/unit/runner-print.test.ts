@@ -74,6 +74,20 @@ describe('printReady', () => {
     expect(out).toContain('proj     demo-test-e2e-deadbeef');
     expect(out).toContain(path.join('node_modules', '.cache', 'test-runner', 'e2e.json'));
   });
+  it('names E2E_APP_PORT when the app port was pinned', () => {
+    printReady({
+      runner: 'e2e',
+      mode: 'default',
+      dbPort: 5439,
+      dbFromEnv: false,
+      dbUrl: 'postgres://postgres:postgres@localhost:5439/main',
+      appPort: 4321,
+      appFromEnv: true,
+      appUrl: 'http://localhost:4321',
+      projectName: 'demo-test-e2e-deadbeef',
+    });
+    expect(captured()).toContain('app port 4321 (from $E2E_APP_PORT)');
+  });
 });
 
 describe('printStatus', () => {
