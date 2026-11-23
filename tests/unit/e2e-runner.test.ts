@@ -5,6 +5,7 @@ import type { SetupServer } from 'msw/node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dockerDownCalls = vi.hoisted(() => [] as { removeVolumes: boolean }[]);
+const dockerUpCalls = vi.hoisted(() => [] as { allowReuse: boolean }[]);
 
 vi.mock('execa', () => ({
   execa: vi.fn(),
@@ -37,7 +38,12 @@ vi.mock('@/internal/reap-process-group', () => ({
 vi.mock('@/internal/listr-tasks', () => {
   const noopTask = (title: string) => ({ title, task: async () => {} });
   return {
-    dockerUpTask: () => noopTask('docker up'),
+    dockerUpTask: (_env: unknown, _dbPort: number, _projectName: string, allowReuse: boolean) => ({
+      title: 'docker up',
+      task: async () => {
+        dockerUpCalls.push({ allowReuse });
+      },
+    }),
     dockerDownTask: (_env: unknown, _projectName: string, _compose: unknown, removeVolumes: boolean) => {
       dockerDownCalls.push({ removeVolumes });
       return noopTask('docker down');
@@ -127,6 +133,7 @@ beforeEach(() => {
   appChild = makePendingExecaResult;
   exitCodeBefore = process.exitCode;
   dockerDownCalls.length = 0;
+  dockerUpCalls.length = 0;
 
   const originalRun = Listr.prototype.run;
   vi.spyOn(Listr.prototype, 'run').mockImplementation(async function (
@@ -526,6 +533,81 @@ describe('e2e-runner app port already in use', () => {
 
     expect(startAppCall(), 'the reused port answers already, so readiness would pass on it').toBeUndefined();
     expect(process.exitCode, ':up must exit non-zero').toBe(1);
+  });
+
+  describe('on a reused testbed', () => {
+    const savedState = () => ({
+      projectName: 'test-project',
+      dbPort: 65000,
+      appPort: 65001,
+      pid: 4242,
+      appPid: APP_PID,
+    });
+
+    const reportedMessages = () =>
+      vi
+        .mocked(console.error)
+        .mock.calls.flat()
+        .map((arg) => (arg instanceof Error ? arg.message : String(arg)));
+
+    let loggedLines: string[];
+
+    const runUpUntilExit = async () => {
+      vi.mocked(readRunnerState).mockResolvedValue(savedState());
+      vi.mocked(isPidAlive).mockReturnValue(false);
+      await runUp(() => vi.mocked(process.exit).mock.calls.length > 0, ':up exit');
+    };
+
+    beforeEach(() => {
+      loggedLines = [];
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        loggedLines.push(args.map(String).join(' '));
+      });
+    });
+
+    it('keeps the saved testbed instead of reading the taken port as stale state', async () => {
+      vi.mocked(isPortInUse).mockResolvedValue(true);
+
+      await runUpUntilExit();
+
+      expect(
+        vi.mocked(clearRunnerState),
+        'the state is the only handle :down has on the testbed',
+      ).not.toHaveBeenCalled();
+      expect(vi.mocked(writeRunnerState), 'the saved state should stay as it was').not.toHaveBeenCalled();
+      expect(dockerUpCalls, 'a fresh testbed would leave the saved one running with nothing to remove it').toEqual([]);
+      expect(loggedLines.join('\n'), 'the testbed is not stale').not.toContain('stale state');
+      expect(process.exitCode, ':up must exit non-zero').toBe(1);
+    });
+
+    it('says the taken port belongs to the saved testbed and how to get out', async () => {
+      vi.mocked(isPortInUse).mockResolvedValue(true);
+
+      await runUpUntilExit();
+
+      const message = reportedMessages().find((text) => text.includes('port 65001 is already in use'));
+      expect(message, 'the failure should name the saved app port').toBeDefined();
+      expect(message, 'E2E_APP_PORT is not read when a testbed is reused').not.toContain('E2E_APP_PORT');
+      expect(message, ':down is the way to drop the saved testbed').toContain(':down');
+    });
+
+    it('keeps the testbed when the port is taken while the reused testbed starts', async () => {
+      vi.mocked(isPortInUse).mockResolvedValueOnce(false).mockResolvedValue(true);
+
+      await runUpUntilExit();
+
+      expect(startAppCall(), 'whatever took the port would be tested instead of the app').toBeUndefined();
+      expect(
+        vi.mocked(clearRunnerState),
+        'the state is the only handle :down has on the testbed',
+      ).not.toHaveBeenCalled();
+      expect(
+        dockerUpCalls.filter((call) => !call.allowReuse),
+        'no fresh testbed should be started next to the saved one',
+      ).toEqual([]);
+      expect(process.exitCode, ':up must exit non-zero').toBe(1);
+    });
   });
 });
 

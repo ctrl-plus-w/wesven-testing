@@ -92,15 +92,24 @@ const buildAppTask = (env: E2eRunnerEnv, enabled: boolean) => ({
   enabled: () => enabled,
 });
 
+const NEW_APP_PORT_HINT =
+  'Stop what listens on it or set E2E_APP_PORT to a free port, so the tests do not run against it.';
+
+const SAVED_APP_PORT_HINT =
+  'It is the app port of the saved testbed, which is kept. Stop what listens on it and run :up again, or run :down to remove the testbed so the next :up starts a fresh one.';
+
+/**
+ * Kept apart from other start failures so `:up` does not read a taken port as stale state and
+ * throw away the testbed it was about to reuse.
+ */
+class AppPortInUseError extends Error {}
+
 /**
  * Refuses an app port that something already answers on: the readiness wait only checks that
  * the port accepts connections, so it would pass on that server and Cypress would test it.
  */
-const assertAppPortFree = async (appPort: number) => {
-  if (await isPortInUse(appPort))
-    throw new Error(
-      `e2e-runner: port ${appPort} is already in use. Stop what listens on it or set E2E_APP_PORT to a free port, so the tests do not run against it.`,
-    );
+const assertAppPortFree = async (appPort: number, hint: string) => {
+  if (await isPortInUse(appPort)) throw new AppPortInUseError(`e2e-runner: port ${appPort} is already in use. ${hint}`);
 };
 
 const tailLines = (text: string) => text.trimEnd().split('\n').slice(-EXIT_OUTPUT_TAIL_LINES).join('\n');
@@ -120,10 +129,10 @@ const rejectWhenAppExits = async (child: ExecaChildProcess, appPort: number): Pr
   throw new Error(stderrTail ? `${reason} Last lines of its stderr:\n${stderrTail}` : reason);
 };
 
-const startAppTask = (env: E2eRunnerEnv, appPort: number) => ({
+const startAppTask = (env: E2eRunnerEnv, appPort: number, portInUseHint: string) => ({
   title: `Starting the application (port ${appPort})`,
   task: async (ctx: E2eContext, task: AnyTask) => {
-    await assertAppPortFree(appPort);
+    await assertAppPortFree(appPort, portInUseHint);
 
     const webProcess = execa('pnpm', ['run', 'start'], { env: { ...env, PORT: String(appPort) }, detached: true });
     // The group is killed on teardown; swallow the resulting non-zero exit.
@@ -232,7 +241,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
   const runDefault = async (options: { open: boolean; skipBuild: boolean; cypressArgs: readonly string[] }) => {
     const { port: dbPort, fromEnv: dbFromEnv } = await resolvePort('TEST_DB_PORT');
     const { port: appPort, fromEnv: appFromEnv } = await resolvePort('E2E_APP_PORT');
-    await assertAppPortFree(appPort);
+    await assertAppPortFree(appPort, NEW_APP_PORT_HINT);
     const env = buildEnv(dbPort, appPort, opts.extraEnv);
     exportEnv(env);
     const projectName = await buildProjectName(RUNNER);
@@ -262,10 +271,13 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
               {
                 title: 'Starting the application environment',
                 task: (_appCtx, appTask) =>
-                  appTask.newListr([buildAppTask(env, !options.skipBuild), startAppTask(env, appPort)], {
-                    concurrent: false,
-                    rendererOptions: { collapseSubtasks: false },
-                  }),
+                  appTask.newListr(
+                    [buildAppTask(env, !options.skipBuild), startAppTask(env, appPort, NEW_APP_PORT_HINT)],
+                    {
+                      concurrent: false,
+                      rendererOptions: { collapseSubtasks: false },
+                    },
+                  ),
               },
               startMockTask(server),
             ],
@@ -337,7 +349,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
   const runFreshUp = async (options: { skipBuild: boolean }) => {
     const { port: dbPort, fromEnv: dbFromEnv } = await resolvePort('TEST_DB_PORT');
     const { port: appPort, fromEnv: appFromEnv } = await resolvePort('E2E_APP_PORT');
-    await assertAppPortFree(appPort);
+    await assertAppPortFree(appPort, NEW_APP_PORT_HINT);
     const env = buildEnv(dbPort, appPort, opts.extraEnv);
     exportEnv(env);
     const projectName = await buildProjectName(RUNNER);
@@ -364,10 +376,13 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
               {
                 title: 'Starting the application environment',
                 task: (_appCtx, appTask) =>
-                  appTask.newListr([buildAppTask(env, !options.skipBuild), startAppTask(env, appPort)], {
-                    concurrent: false,
-                    rendererOptions: { collapseSubtasks: false },
-                  }),
+                  appTask.newListr(
+                    [buildAppTask(env, !options.skipBuild), startAppTask(env, appPort, NEW_APP_PORT_HINT)],
+                    {
+                      concurrent: false,
+                      rendererOptions: { collapseSubtasks: false },
+                    },
+                  ),
               },
               startMockTask(server),
             ],
@@ -393,6 +408,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
   const runReuseUp = async (state: RunnerState) => {
     if (!state.appPort) throw new Error('state missing appPort');
     const appPort = state.appPort;
+    await assertAppPortFree(appPort, SAVED_APP_PORT_HINT);
     const env = buildEnv(state.dbPort, appPort, opts.extraEnv);
     exportEnv(env);
     const startedAt = Date.now();
@@ -422,7 +438,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
               {
                 title: 'Starting the application environment',
                 task: (_appCtx, appTask) =>
-                  appTask.newListr([startAppTask(env, appPort)], {
+                  appTask.newListr([startAppTask(env, appPort, SAVED_APP_PORT_HINT)], {
                     concurrent: false,
                     rendererOptions: { collapseSubtasks: false },
                   }),
@@ -468,6 +484,7 @@ export const createE2eRunner = (opts: E2eRunnerOptions) => {
           await runReuseUp(state);
           return;
         } catch (err) {
+          if (err instanceof AppPortInUseError) throw err;
           console.error(err);
           // biome-ignore lint/suspicious/noConsole: notify on stale-state recovery
           console.log('e2e-runner: stale state cleared, reallocating');

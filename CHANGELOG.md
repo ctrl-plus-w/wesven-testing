@@ -15,7 +15,7 @@ All notable changes to `@wesven/testing` are documented here. Format: hand-writt
 
 ### Fixed
 
-- `e2e-runner` fails before building or starting anything when something already answers on the app port, instead of running Cypress against it.
+- `e2e-runner` fails before building or starting anything when something already answers on the app port, instead of running Cypress against it. When `:up` reuses a saved testbed, it keeps that testbed and its state, so `:down` can still remove it.
 - `e2e-runner` fails when `pnpm run start` exits before the app port opens, with the exit code and the last 20 lines of its stderr, instead of waiting out the 60 s timeout or passing on another server.
 
 ## [0.1.0] - Unreleased
