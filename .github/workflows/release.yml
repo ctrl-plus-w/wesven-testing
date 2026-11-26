@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Check tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v${PKG_VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION} (expected v${PKG_VERSION})."
+            exit 1
+          fi
+          echo "PKG_VERSION=${PKG_VERSION}" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec biome check
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test:unit
+      - run: pnpm run build
+      - name: Pack
+        run: |
+          pnpm pack
+          TARBALL="wesven-testing-${PKG_VERSION}.tgz"
+          tar -tzf "$TARBALL" > contents.txt
+          grep -q '^package/dist/e2e-runner\.js$' contents.txt || { echo "::error::${TARBALL} has no dist/"; exit 1; }
+          grep -q '^package/assets/' contents.txt || { echo "::error::${TARBALL} has no assets/"; exit 1; }
+          if grep -E '^package/(src|tests)/' contents.txt; then echo "::error::${TARBALL} ships src/ or tests/"; exit 1; fi
+      # Fails if the release already exists: an uploaded asset is never replaced, because
+      # consumers' lockfiles pin its integrity hash. Fix forward with a new version.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "wesven-testing-${PKG_VERSION}.tgz" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md). Install: \`\"@wesven/testing\": \"https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/wesven-testing-${PKG_VERSION}.tgz\"\`"

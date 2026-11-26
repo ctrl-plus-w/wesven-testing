@@ -1,6 +1,6 @@
 {
   "name": "@wesven/testing",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "description": "Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Postgres + Vitest + Cypress + MSW). Compiled with tsup; ships ESM .js + .d.ts.",
   "license": "MIT",
   "type": "module",
@@ -97,5 +97,5 @@
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.4"
   },
-  "packageManager": "pnpm@8.15.1"
+  "packageManager": "pnpm@10.34.9"
 }

@@ -1,6 +1,6 @@
 # @wesven/testing
 
-Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Postgres + Vitest + Cypress + MSW). Distributed as a git URL pinned by tag. Compiled with `tsup`; ships ESM `.js` + `.d.ts` from `dist/`.
+Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Postgres + Vitest + Cypress + MSW). Distributed as a prebuilt tarball attached to each GitHub Release. Compiled with `tsup`; ships ESM `.js` + `.d.ts` from `dist/`.
 
 ## Install
 
@@ -8,10 +8,12 @@ Shared testing infrastructure for wesven-stack projects (Next.js + Drizzle + Pos
 // package.json
 {
   "dependencies": {
-    "@wesven/testing": "github:ctrl-plus-w/wesven-testing#v0.1.0"
+    "@wesven/testing": "https://github.com/ctrl-plus-w/wesven-testing/releases/download/v0.2.0/wesven-testing-0.2.0.tgz"
   }
 }
 ```
+
+Use the release tarball, not a `github:` URL: pnpm builds a git dependency on every install, and a tarball is installed as is.
 
 The package declares `vitest`, `cypress`, `msw`, `react`, `react-dom`, `@vitejs/plugin-react`, `vite-tsconfig-paths`, `@testing-library/jest-dom`, `@testing-library/react`, and `jsdom` as peer dependencies. Keep them in your project's own `package.json`.
 
@@ -133,7 +135,18 @@ The e2e runner does not read `PORT`. It sets `PORT` only for the app it starts (
 
 ## Versioning
 
-Pre-1.0: minor bumps may include breaking changes; patches are bug fixes only. 1.0 will ship after a second consumer (besides the template) has migrated and two consecutive minor bumps have passed without breakage. Releases are a single `git tag && git push --tags`. See `CHANGELOG.md` for migration diffs.
+Pre-1.0: minor bumps may include breaking changes; patches are bug fixes only. 1.0 will ship after a second consumer (besides the template) has migrated and two consecutive minor bumps have passed without breakage. See `CHANGELOG.md` for migration diffs.
+
+## Releasing
+
+1. Bump `version` in `package.json`.
+2. Add the version's entry to `CHANGELOG.md`.
+3. Commit, then tag `vX.Y.Z` (the tag must be `v` + the `package.json` version).
+4. Push the commit, then the tag: `git push && git push origin vX.Y.Z`.
+
+The `release` workflow checks the tag, lints, runs the unit tests, builds, packs, and creates the GitHub Release with `wesven-testing-X.Y.Z.tgz` attached.
+
+Never re-upload an asset to an existing release: consumers' lockfiles pin the tarball's integrity hash, so a replaced asset breaks their installs. Fix forward with a new version instead.
 
 ## License
 
